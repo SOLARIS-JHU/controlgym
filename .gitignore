@@ -9,6 +9,7 @@
 
 # test data
 test_data
+data_*/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
