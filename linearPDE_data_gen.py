@@ -15,10 +15,8 @@ Run directly from the repository root:
 4. Save outputs to a specific directory:
    `.venv/bin/python linearPDE_data_gen.py --config linearPDE_data_gen.default.yaml --output-dir /tmp/linear_pde_runs`
 
-Outputs written for each run:
-- `{env_id}_dataset_zero_{num_traj}.npz`
-- `{env_id}_dataset_random_{num_traj}.npz`
-- `{env_id}_dataset_ctrl_{num_traj}.npz`
+Outputs written for each requested mode:
+- `{env_id}_dataset_{mode}_{num_traj}.npz`
 """
 
 from __future__ import annotations
@@ -48,6 +46,7 @@ DEFAULT_RANDOM_SIGNAL_KWARGS = {
 }
 DEFAULT_RUN_CONFIG = {
     "ctrl_mode": "lqg",
+    "dataset_modes": list(DATASET_MODES),
     "init_seed": 123,
     "noise_seed": 10_000,
     "sample_check_count": 5,
@@ -103,23 +102,40 @@ def _is_2d_array(x) -> bool:
     return isinstance(x, np.ndarray) and x.ndim == 2
 
 
-def _validate_inputs(env_id: str, ctrl_mode: str, n_traj: int) -> None:
-    if ctrl_mode not in VALID_CTRL_MODES:
-        raise ValueError("ctrl_mode must be 'lqg' or 'lqr'.")
+def _validate_dataset_modes(dataset_modes) -> tuple[str, ...]:
+    dataset_modes = DATASET_MODES if dataset_modes is None else tuple(dataset_modes)
+    if len(dataset_modes) == 0:
+        raise ValueError("dataset_modes must contain at least one mode.")
+    if len(set(dataset_modes)) != len(dataset_modes):
+        raise ValueError("dataset_modes contains duplicate modes.")
+    unknown = set(dataset_modes) - set(DATASET_MODES)
+    if unknown:
+        raise ValueError(f"Unknown dataset modes: {unknown}. Allowed: {DATASET_MODES}")
+    return dataset_modes
+
+
+def _validate_inputs(
+    env_id: str,
+    ctrl_mode: str,
+    n_traj: int,
+    dataset_modes,
+) -> tuple[str, ...]:
     if env_id not in LINEAR_PDE_IDS:
         raise ValueError(
             f"{env_id} is nonlinear in controlgym. LQG/LQR are supported only for {LINEAR_PDE_IDS}."
         )
     if n_traj <= 0:
         raise ValueError("n_traj must be a positive integer.")
+    dataset_modes = _validate_dataset_modes(dataset_modes)
+    if "ctrl" in dataset_modes and ctrl_mode not in VALID_CTRL_MODES:
+        raise ValueError("ctrl_mode must be 'lqg' or 'lqr' when 'ctrl' is requested.")
+    return dataset_modes
 
 
-def _make_envs(env_id: str, **env_kwargs):
+def _make_envs(env_id: str, dataset_modes, **env_kwargs):
     env_init = gym.make(env_id, **env_kwargs)
-    env_zero = gym.make(env_id, **env_kwargs)
-    env_random = gym.make(env_id, **env_kwargs)
-    env_ctrl = gym.make(env_id, **env_kwargs)
-    return env_init, env_zero, env_random, env_ctrl
+    envs = {mode: gym.make(env_id, **env_kwargs) for mode in dataset_modes}
+    return env_init, envs
 
 
 def _resolve_random_signal_kwargs(random_signal_kwargs: dict | None) -> dict:
@@ -132,27 +148,38 @@ def _resolve_random_signal_kwargs(random_signal_kwargs: dict | None) -> dict:
 
 
 def _make_controllers(
-    env_zero,
-    env_random,
-    env_ctrl,
+    envs,
+    dataset_modes,
     ctrl_mode: str,
     random_signal_kwargs: dict,
 ):
-    zero = gym.controllers.Zero(env_zero)
-    random = gym.controllers.SmoothRandom(env_random, **random_signal_kwargs)
-    ctrl = gym.controllers.LQG(env_ctrl) if ctrl_mode == "lqg" else gym.controllers.LQR(env_ctrl)
+    controllers = {}
 
-    if ctrl_mode == "lqg":
-        if getattr(env_ctrl, "sensor_noise_cov", 0.0) <= 0:
-            raise ValueError("LQG requires sensor_noise_cov > 0.")
-        if not _is_2d_array(ctrl.gain_lqr):
-            raise RuntimeError("LQG gain_lqr is invalid. Try different env/noise settings.")
-        if not _is_2d_array(ctrl.gain_kf):
-            raise RuntimeError(
-                "LQG gain_kf is invalid (not a matrix). "
-                "Try setting n_observation=n_state and positive process/sensor noise covariances."
-            )
-    return zero, random, ctrl
+    if "zero" in dataset_modes:
+        controllers["zero"] = gym.controllers.Zero(envs["zero"])
+
+    if "random" in dataset_modes:
+        controllers["random"] = gym.controllers.SmoothRandom(
+            envs["random"],
+            **random_signal_kwargs,
+        )
+
+    if "ctrl" in dataset_modes:
+        env_ctrl = envs["ctrl"]
+        ctrl = gym.controllers.LQG(env_ctrl) if ctrl_mode == "lqg" else gym.controllers.LQR(env_ctrl)
+        if ctrl_mode == "lqg":
+            if getattr(env_ctrl, "sensor_noise_cov", 0.0) <= 0:
+                raise ValueError("LQG requires sensor_noise_cov > 0.")
+            if not _is_2d_array(ctrl.gain_lqr):
+                raise RuntimeError("LQG gain_lqr is invalid. Try different env/noise settings.")
+            if not _is_2d_array(ctrl.gain_kf):
+                raise RuntimeError(
+                    "LQG gain_kf is invalid (not a matrix). "
+                    "Try setting n_observation=n_state and positive process/sensor noise covariances."
+                )
+        controllers["ctrl"] = ctrl
+
+    return controllers
 
 
 def _sample_initial_state(env_init, seed: int) -> np.ndarray:
@@ -165,7 +192,7 @@ def _extract_shared_b2(*envs) -> np.ndarray:
     for env in envs[1:]:
         if not np.allclose(b2, env.B2):
             raise RuntimeError(
-                "Expected env_zero, env_random, and env_ctrl to share the same B2 matrix."
+                "Expected all requested linear PDE env clones to share the same B2 matrix."
             )
     return b2
 
@@ -222,23 +249,29 @@ def _compute_control_field(b2: np.ndarray, U: np.ndarray) -> np.ndarray:
     return b2 @ U
 
 
-def _allocate_dataset_arrays(n_traj: int, n_state: int, n_action: int, n_steps: int):
+def _allocate_dataset_arrays(
+    dataset_modes,
+    n_traj: int,
+    n_state: int,
+    n_action: int,
+    n_steps: int,
+):
     return {
         "init_states": np.zeros((n_traj, n_state)),
         "X": {
             mode: np.full((n_traj, n_state, n_steps + 1), np.nan)
-            for mode in DATASET_MODES
+            for mode in dataset_modes
         },
         "U": {
             mode: np.full((n_traj, n_action, n_steps), np.nan)
-            for mode in DATASET_MODES
+            for mode in dataset_modes
         },
         "U_field": {
             mode: np.full((n_traj, n_state, n_steps), np.nan)
-            for mode in DATASET_MODES
+            for mode in dataset_modes
         },
-        "R": {mode: np.zeros(n_traj) for mode in DATASET_MODES},
-        "T": {mode: np.zeros(n_traj, dtype=int) for mode in DATASET_MODES},
+        "R": {mode: np.zeros(n_traj) for mode in dataset_modes},
+        "T": {mode: np.zeros(n_traj, dtype=int) for mode in dataset_modes},
     }
 
 
@@ -255,28 +288,33 @@ def generate_controlled_dataset(
     env_id: str,
     n_traj: int,
     ctrl_mode: str = "lqg",
+    dataset_modes=DATASET_MODES,
     init_seed: int = 123,
     noise_seed: int = 10_000,
     random_signal_kwargs: dict | None = None,
     verbose: bool = True,
     **env_kwargs,
 ):
-    """Generate aligned zero, random, and closed-loop trajectories."""
-    _validate_inputs(env_id, ctrl_mode, n_traj)
+    """Generate aligned trajectory datasets for the requested rollout modes."""
+    dataset_modes = _validate_inputs(env_id, ctrl_mode, n_traj, dataset_modes)
     resolved_random_signal_kwargs = _resolve_random_signal_kwargs(random_signal_kwargs)
 
-    env_init, env_zero, env_random, env_ctrl = _make_envs(env_id, **env_kwargs)
-    zero, random_controller, ctrl = _make_controllers(
-        env_zero,
-        env_random,
-        env_ctrl,
+    env_init, envs = _make_envs(env_id, dataset_modes, **env_kwargs)
+    controllers = _make_controllers(
+        envs,
+        dataset_modes,
         ctrl_mode,
         resolved_random_signal_kwargs,
     )
 
-    n_state, n_action, n_steps = env_zero.n_state, env_zero.n_action, env_zero.n_steps
-    out = _allocate_dataset_arrays(n_traj, n_state, n_action, n_steps)
-    b2 = _extract_shared_b2(env_zero, env_random, env_ctrl)
+    reference_env = next(iter(envs.values()))
+    n_state, n_action, n_steps = (
+        reference_env.n_state,
+        reference_env.n_action,
+        reference_env.n_steps,
+    )
+    out = _allocate_dataset_arrays(dataset_modes, n_traj, n_state, n_action, n_steps)
+    b2 = _extract_shared_b2(*tuple(envs.values()))
 
     out["traj_times_sec"] = np.zeros(n_traj, dtype=np.float64)
     t_global_start = time.perf_counter()
@@ -288,13 +326,16 @@ def generate_controlled_dataset(
         out["init_states"][k] = x0
 
         seed_k = noise_seed + k
-        xz, uz, rz, tz = rollout_with_actions(env_zero, zero, "zero", x0, seed_k)
-        xr, ur, rr, tr = rollout_with_actions(env_random, random_controller, "random", x0, seed_k)
-        xc, uc, rc, tc = rollout_with_actions(env_ctrl, ctrl, ctrl_mode, x0, seed_k)
-
-        _store_one_rollout(out, "zero", b2, k, xz, uz, rz, tz)
-        _store_one_rollout(out, "random", b2, k, xr, ur, rr, tr)
-        _store_one_rollout(out, "ctrl", b2, k, xc, uc, rc, tc)
+        for mode in dataset_modes:
+            rollout_mode = ctrl_mode if mode == "ctrl" else mode
+            X, U, R, T = rollout_with_actions(
+                envs[mode],
+                controllers[mode],
+                rollout_mode,
+                x0,
+                seed_k,
+            )
+            _store_one_rollout(out, mode, b2, k, X, U, R, T)
 
         dt = time.perf_counter() - t0
         out["traj_times_sec"][k] = dt
@@ -312,10 +353,14 @@ def generate_controlled_dataset(
     total_elapsed = time.perf_counter() - t_global_start
 
     out["env_id"] = env_id
-    out["ctrl_mode"] = ctrl_mode
-    out["dataset_modes"] = DATASET_MODES
+    out["ctrl_mode"] = ctrl_mode if "ctrl" in dataset_modes else None
+    out["dataset_modes"] = dataset_modes
     out["env_kwargs"] = dict(env_kwargs)
     out["random_signal_kwargs"] = dict(resolved_random_signal_kwargs)
+    out["seeds"] = {
+        "init_seed": init_seed,
+        "noise_seed": noise_seed,
+    }
     out["B2"] = b2
     out["total_time_sec"] = float(total_elapsed)
     out["mean_time_per_traj_sec"] = float(out["traj_times_sec"].mean())
@@ -332,12 +377,14 @@ def generate_controlled_dataset(
 
 def build_export_dataset(data, mode="ctrl", fill_nan=False):
     """Convert plotting-friendly arrays into time-major export arrays."""
-    if mode not in DATASET_MODES:
-        raise ValueError(f"mode must be one of {DATASET_MODES}.")
+    available_modes = tuple(data.get("dataset_modes", DATASET_MODES))
+    if mode not in available_modes:
+        raise ValueError(f"mode must be one of {available_modes}.")
 
     X = data["X"][mode]
     U = data["U"][mode]
     F = data["U_field"][mode]
+    seeds = data.get("seeds") or {}
 
     ds = {
         "solutions": np.transpose(X, (0, 2, 1)),
@@ -348,8 +395,10 @@ def build_export_dataset(data, mode="ctrl", fill_nan=False):
         "T": data["T"][mode].copy(),
         "env_id": data.get("env_id"),
         "ctrl_mode": data.get("ctrl_mode"),
+        "dataset_modes": available_modes,
         "env_kwargs": dict(data.get("env_kwargs", {})),
         "random_signal_kwargs": dict(data.get("random_signal_kwargs", {})),
+        "seeds": dict(seeds),
         "export_mode": mode,
     }
 
@@ -371,10 +420,11 @@ def sample_trajectory_indices(n_total: int, sample_size: int, seed: int) -> np.n
 
 def print_sample_shape_checks(data, idxs: np.ndarray) -> None:
     """Print per-trajectory tensor shapes for a sampled subset."""
+    modes = tuple(data.get("dataset_modes", DATASET_MODES))
     print(f"\nShape checks on {len(idxs)} sampled trajectories: {idxs.tolist()}")
     for i in idxs:
         print(f"\nTrajectory {int(i)}")
-        for mode in DATASET_MODES:
+        for mode in modes:
             print(f"X[{mode}]: {data['X'][mode][i].shape}")
             print(f"U[{mode}]: {data['U'][mode][i].shape}")
             print(f"U_field[{mode}]: {data['U_field'][mode][i].shape}")
@@ -488,6 +538,7 @@ def _parser_defaults_from_config(config: dict) -> dict:
         "env_id",
         "num_traj",
         "ctrl_mode",
+        "dataset_modes",
         "init_seed",
         "noise_seed",
         "sample_check_count",
@@ -573,6 +624,7 @@ def print_hyperparameters(
         "env_id": config["env_id"],
         "num_traj": config["num_traj"],
         "ctrl_mode": config["ctrl_mode"],
+        "dataset_modes": config["dataset_modes"],
         "init_seed": config["init_seed"],
         "noise_seed": config["noise_seed"],
         "sample_check_count": config["sample_check_count"],
@@ -592,16 +644,18 @@ def save_export_datasets(
     output_dir: Path,
     fill_nan: bool,
 ) -> list[Path]:
-    """Save one compressed NPZ file per mode."""
+    """Save one compressed NPZ file per requested mode."""
     output_dir.mkdir(parents=True, exist_ok=True)
     saved_paths = []
 
-    for mode in DATASET_MODES:
+    modes = tuple(data.get("dataset_modes", DATASET_MODES))
+    for mode in modes:
         ds = build_export_dataset(data, mode=mode, fill_nan=fill_nan)
         out_path = output_dir / f"{data['env_id']}_dataset_{mode}_{num_traj}.npz"
         np.savez_compressed(
             out_path,
             solutions=ds["solutions"],
+            init_states=ds["init_states"],
             controls=ds["controls"],
             controls_field=ds["controls_field"],
             R=ds["R"],
@@ -610,10 +664,12 @@ def save_export_datasets(
             env_id=np.array(ds["env_id"]),
             ctrl_mode=np.array(ds["ctrl_mode"]),
             export_mode=np.array(ds["export_mode"]),
+            dataset_modes_json=np.array(json.dumps(_to_serializable(ds["dataset_modes"]))),
             env_kwargs_json=np.array(json.dumps(_to_serializable(ds["env_kwargs"]), sort_keys=True)),
             random_signal_kwargs_json=np.array(
                 json.dumps(_to_serializable(ds["random_signal_kwargs"]), sort_keys=True)
             ),
+            seeds_json=np.array(json.dumps(_to_serializable(ds["seeds"]), sort_keys=True)),
             total_time_sec=np.array(data["total_time_sec"]),
             mean_time_per_traj_sec=np.array(data["mean_time_per_traj_sec"]),
         )
@@ -637,6 +693,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--env-id", choices=sorted(LINEAR_PDE_IDS))
     parser.add_argument("--num-traj", type=int)
     parser.add_argument("--ctrl-mode", default="lqg", choices=sorted(VALID_CTRL_MODES))
+    parser.add_argument(
+        "--dataset-modes",
+        nargs="+",
+        choices=DATASET_MODES,
+        help="Subset of rollout modes to generate, e.g. --dataset-modes zero ctrl",
+    )
     parser.add_argument("--init-seed", default=123, type=int)
     parser.add_argument("--noise-seed", default=10_000, type=int)
     parser.add_argument("--sample-check-count", default=5, type=int)
@@ -715,6 +777,7 @@ def _merge_cli_and_yaml_config(
         "env_id",
         "num_traj",
         "ctrl_mode",
+        "dataset_modes",
         "init_seed",
         "noise_seed",
         "sample_check_count",
@@ -771,6 +834,7 @@ def main() -> None:
         env_id=config["env_id"],
         n_traj=config["num_traj"],
         ctrl_mode=config["ctrl_mode"],
+        dataset_modes=tuple(config["dataset_modes"]),
         init_seed=config["init_seed"],
         noise_seed=config["noise_seed"],
         random_signal_kwargs=random_signal_kwargs,
@@ -787,7 +851,7 @@ def main() -> None:
     print_sample_shape_checks(data, idxs)
     check_dataset_diversity(data, idxs=idxs)
 
-    # Step 3: export all three modes to compressed NPZ files.
+    # Step 3: export the requested modes to compressed NPZ files.
     save_export_datasets(
         data=data,
         num_traj=config["num_traj"],

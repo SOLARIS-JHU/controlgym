@@ -7,16 +7,22 @@
 #       --config linearPDE_data_gen.default.yaml \
 #       --num-traj 300 \
 #       --ctrl-mode lqr
+#   .venv/bin/python linearPDE_data_gen.py \
+#       --config linearPDE_data_gen.default.yaml \
+#       --dataset-modes zero ctrl
 
 env_id: wave
-num_traj: 10
+num_traj: 1000
 ctrl_mode: lqg
+dataset_modes: [zero, random, ctrl]
+# Example reduced test run:
+# dataset_modes: [zero, random]
 init_seed: 123
 noise_seed: 10000
 sample_check_count: 5
 sample_check_seed: 42
 fill_nan: false
-output_dir: .
+output_dir: data_test/
 
 env_kwargs:
   n_state: 200
