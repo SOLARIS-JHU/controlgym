@@ -10,6 +10,7 @@
 # test data
 test_data
 data_*/
+/*.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
