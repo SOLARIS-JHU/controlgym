@@ -341,6 +341,7 @@ def build_export_dataset(data, mode="ctrl", fill_nan=False):
 
     ds = {
         "solutions": np.transpose(X, (0, 2, 1)),
+        "init_states": data["init_states"][:, None, :].copy(),
         "controls": np.transpose(U, (0, 2, 1)),
         "controls_field": np.transpose(F, (0, 2, 1)),
         "R": data["R"][mode].copy(),
