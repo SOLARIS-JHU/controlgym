@@ -45,6 +45,17 @@ class SmoothRandom:
         verbose=True,
     )
     total_reward = controller.run(seed=0)
+
+    controller = controlgym.controllers.SmoothRandom(
+        env,
+        seed=123,
+        signal_mode="manual",
+        freq_range=(1, 3),
+        min_val=-1,
+        max_val=1,
+        amp_range=(10, 20),
+    )
+    total_reward = controller.run(seed=0)
     ```
 
     Arguments:
