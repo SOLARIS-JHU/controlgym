@@ -12,8 +12,8 @@
 #       --dataset-modes zero ctrl
 
 env_id: wave
-num_traj: 1000
-ctrl_mode: lqg
+num_traj: 5
+ctrl_mode: lqr
 dataset_modes: [zero, random, ctrl]
 # Example reduced test run:
 # dataset_modes: [zero, random]
@@ -22,7 +22,7 @@ noise_seed: 10000
 sample_check_count: 5
 sample_check_seed: 42
 fill_nan: false
-output_dir: data_test/
+output_dir: data_linearPDE/
 
 env_kwargs:
   n_state: 200
@@ -31,17 +31,17 @@ env_kwargs:
   n_steps: 200
   process_noise_cov: 0.0
   sensor_noise_cov: 1.0e-8
-  # action_limit: 0.5
+  action_limit: 0.5
 
-random_signal_kwargs:
-  signal_mode: manual
-  freq_range: [1, 3]
-  min_val: -0.5
-  max_val: 0.5
-  amp_range: [10, 20]
-  num_modes: 4
-  zero_mean: true
-  per_dim: true
+# random_signal_kwargs:
+#   signal_mode: manual
+#   freq_range: [1, 3]
+#   min_val: -0.5
+#   max_val: 0.5
+#   amp_range: [10, 20]
+#   num_modes: 4
+#   zero_mean: true
+#   per_dim: true
 
 # random_signal_kwargs:
 #   signal_mode: env
@@ -50,3 +50,11 @@ random_signal_kwargs:
 #   num_modes: 4
 #   zero_mean: true
 #   per_dim: true
+
+random_signal_kwargs:
+  signal_mode: env
+  cycles_range: [10, 20]
+  amp_range: [10, 20]
+  num_modes: 4
+  zero_mean: true
+  per_dim: true

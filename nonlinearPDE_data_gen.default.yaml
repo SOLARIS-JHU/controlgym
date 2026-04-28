@@ -1,0 +1,81 @@
+# Default configuration for nonlinearPDE_data_gen.py
+# Usage:
+#   .venv/bin/python nonlinearPDE_data_gen.py --config nonlinearPDE_data_gen.default.yaml
+#
+# Any CLI flag can override a YAML value, for example:
+#   .venv/bin/python nonlinearPDE_data_gen.py \
+#       --config nonlinearPDE_data_gen.default.yaml \
+#       --num-traj 300 \
+#       --dataset-modes zero random
+#   .venv/bin/python nonlinearPDE_data_gen.py \
+#       --config nonlinearPDE_data_gen.default.yaml \
+#       --dataset-modes zero ctrl \
+#       --ppo-checkpoint-dir /path/to/ppo_run
+
+env_id: burgers
+num_traj: 4
+ctrl_mode: ppo
+# dataset_modes: [zero, random, ctrl]
+# Example zero + random run:
+dataset_modes: [zero, random]
+# dataset_modes: [zero]
+init_seed: 123
+noise_seed: 10000
+sample_check_count: 5
+sample_check_seed: 42
+fill_nan: false
+output_dir: data_test/burgers
+train_controller: false
+# ppo_checkpoint_dir: /path/to/ppo_run
+
+# env_kwargs:
+#   n_state: 256
+#   n_observation: 256
+#   n_action: 8
+#   n_steps: 400
+#   process_noise_cov: 0.0
+#   sensor_noise_cov: 1.0e-8
+#   action_limit: 1.0
+
+env_kwargs:
+  n_state: 256
+  n_observation: 256
+  n_action: 8
+  n_steps: 100
+  process_noise_cov: 0.0
+  sensor_noise_cov: 1.0e-8
+  action_limit: 1.0
+
+# random_signal_kwargs:
+#   signal_mode: manual
+#   freq_range: [1, 3]
+#   min_val: -1
+#   max_val: 1
+#   amp_range: [10, 20]
+
+# random_signal_kwargs:
+#   signal_mode: env
+#   cycles_range: [1, 3]
+#   amp_range: [10, 20]
+
+random_signal_kwargs:
+  signal_mode: env
+  cycles_range: [10, 20]
+  amp_range: [10, 20]
+  num_modes: 4
+  zero_mean: true
+  per_dim: true
+
+ppo_train_kwargs:
+  actor_hidden_dim: 64
+  critic_hidden_dim: 64
+  lr: 1.0e-4
+  discount_factor: 0.99
+  device: cpu
+  num_train_iter: 5
+  num_episodes_per_iter: 8
+  episode_length: 100
+  sgd_epoch_num: 2
+  mini_batch_size: 8
+  clip: 0.2
+  cov_param: 0.05
