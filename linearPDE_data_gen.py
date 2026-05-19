@@ -133,9 +133,30 @@ def _validate_inputs(
 
 
 def _make_envs(env_id: str, dataset_modes, **env_kwargs):
+    env_kwargs = _resolve_env_target_state(env_kwargs)
     env_init = gym.make(env_id, **env_kwargs)
     envs = {mode: gym.make(env_id, **env_kwargs) for mode in dataset_modes}
     return env_init, envs
+
+
+def _resolve_env_target_state(env_kwargs: dict) -> dict:
+    """Expand scalar target_state values to full state vectors."""
+    env_kwargs = dict(env_kwargs)
+    if "target_state" not in env_kwargs:
+        return env_kwargs
+
+    target_state = np.asarray(env_kwargs["target_state"], dtype=float)
+    if target_state.ndim == 0:
+        env_kwargs["target_state"] = np.full(int(env_kwargs["n_state"]), float(target_state))
+        return env_kwargs
+
+    if target_state.shape != (int(env_kwargs["n_state"]),):
+        raise ValueError(
+            "env_kwargs.target_state must be a scalar or have shape "
+            f"({env_kwargs['n_state']},). Got shape {target_state.shape}."
+        )
+    env_kwargs["target_state"] = target_state
+    return env_kwargs
 
 
 def _resolve_random_signal_kwargs(random_signal_kwargs: dict | None) -> dict:
