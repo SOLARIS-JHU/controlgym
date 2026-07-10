@@ -10,6 +10,7 @@ Run directly from the repository root (or anywhere):
   python scripts/gen_tier2_additive_ics.py --pde burgers
   python scripts/gen_tier2_additive_ics.py --all
   python scripts/gen_tier2_additive_ics.py --pde burgers --level 1e-2 --verify
+  python scripts/gen_tier2_additive_ics.py --pde burgers --plot
 """
 
 from __future__ import annotations
@@ -63,7 +64,46 @@ def write_level_npz(out_path: Path, tier0: dict, level_tag: str, delta_target: f
     )
 
 
-def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path):
+def plot_comparison(pde: str, tier0: dict, level_perturbed: dict, level_deltas: dict, out_root: Path) -> Path:
+    """Save one figure: fixed ICs 0,1,2, one subplot each, overlaying tier0 vs each
+    additive noise level on the spatial grid. Convention: schrodinger's state is
+    [Re(u); Im(u)] -> plot |u|; wave's state is [displacement; velocity] -> plot
+    displacement (first field); every other PDE plots the state as-is."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    n_state = tier0["env_kwargs"]["n_state"]
+
+    def field(x):
+        half = n_state // 2
+        if pde == "schrodinger":
+            return np.abs(x[:half] + 1j * x[half:])
+        if pde == "wave":
+            return x[:half]
+        return x
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    for idx, ax in enumerate(axes):
+        x0 = field(tier0["init_states"][idx])
+        grid = np.arange(len(x0))
+        ax.plot(grid, x0, label="tier0")
+        title_bits = []
+        for level_tag, perturbed in level_perturbed.items():
+            ax.plot(grid, field(perturbed[idx]), label=f"d{level_tag}")
+            title_bits.append(f"d{level_tag}={level_deltas[level_tag][idx]:.3g}")
+        ax.set_title(f"IC {idx}: " + ", ".join(title_bits), fontsize=8)
+        ax.legend(fontsize=7)
+    fig.tight_layout()
+
+    out_path = out_root / pde / "tier2_additive_comparison.png"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return out_path
+
+
+def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path, plot: bool = False):
     tier0 = common.load_tier0(data_root, pde)
     med_norm = common.compute_med_norm(tier0["init_states"])
     n_state = tier0["env_kwargs"]["n_state"]
@@ -72,6 +112,8 @@ def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path):
 
     registry_entries = []
     written = []
+    level_perturbed = {}
+    level_deltas = {}
     for level_tag in levels:
         delta_target = common.DELTA_TARGETS[level_tag]
         perturbed = np.empty_like(init_states)
@@ -83,6 +125,8 @@ def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path):
             perturbed[i] = additive_state(x0, delta_target, noise_seed, n_state)
 
         deltas = np.linalg.norm(perturbed - init_states, axis=1) / np.linalg.norm(init_states, axis=1)
+        level_perturbed[level_tag] = perturbed
+        level_deltas[level_tag] = deltas
         median, iqr = common.delta_stats(deltas)
         print(
             f"[{pde}][d{level_tag}] additive measured delta median={median:.4g} iqr={iqr:.4g} "
@@ -108,6 +152,10 @@ def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path):
             "measured_delta_iqr": iqr,
             "flag_factor3_miss": False,
         })
+
+    if plot:
+        plot_path = plot_comparison(pde, tier0, level_perturbed, level_deltas, out_root)
+        print(f"[{pde}] wrote {plot_path}")
 
     return registry_entries, written
 
@@ -148,6 +196,10 @@ def parse_args() -> argparse.Namespace:
         help="Regenerate one (pde, level) cell into a temp dir and assert it is "
              "byte-identical to the existing output; exits nonzero on mismatch.",
     )
+    parser.add_argument(
+        "--plot", action="store_true",
+        help="Save data/<pde>/tier2_additive_comparison.png (ICs 0,1,2 vs their noisy variants).",
+    )
     args = parser.parse_args()
     if args.verify and args.all:
         parser.error("--verify requires a single --pde, not --all.")
@@ -168,7 +220,7 @@ def main() -> None:
 
     all_entries = []
     for pde in pdes:
-        entries, written = generate_pde(pde, data_root, levels, data_root)
+        entries, written = generate_pde(pde, data_root, levels, data_root, plot=args.plot)
         all_entries.extend(entries)
         for out_path in written:
             print(f"[{pde}] wrote {out_path}")

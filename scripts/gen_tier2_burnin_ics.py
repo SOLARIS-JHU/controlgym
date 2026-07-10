@@ -12,6 +12,7 @@ relative to this file):
   python scripts/gen_tier2_burnin_ics.py --pde burgers
   python scripts/gen_tier2_burnin_ics.py --all
   python scripts/gen_tier2_burnin_ics.py --pde burgers --level 1e-2 --verify
+  python scripts/gen_tier2_burnin_ics.py --pde burgers --plot
 
 Base ICs, env_kwargs, and npz structure are loaded from the frozen Tier-0
 file exactly as written by generate_tier0_initial_conditions.py; neither
@@ -113,13 +114,56 @@ def write_level_npz(out_path: Path, tier0: dict, level_tag: str, delta_target: f
     )
 
 
-def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path):
+def plot_comparison(pde: str, tier0: dict, level_perturbed: dict, level_deltas: dict, out_root: Path) -> Path:
+    """Save one figure: fixed ICs 0,1,2, one subplot each, overlaying tier0 vs d0 vs
+    every other computed level on the spatial grid. Convention: schrodinger's state is
+    [Re(u); Im(u)] -> plot |u|; wave's state is [displacement; velocity] -> plot
+    displacement (first field); every other PDE plots the state as-is."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    n_state = tier0["env_kwargs"]["n_state"]
+
+    def field(x):
+        half = n_state // 2
+        if pde == "schrodinger":
+            return np.abs(x[:half] + 1j * x[half:])
+        if pde == "wave":
+            return x[:half]
+        return x
+
+    labels = {"0": "d0 (free evo)"}
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    for idx, ax in enumerate(axes):
+        x0 = field(tier0["init_states"][idx])
+        grid = np.arange(len(x0))
+        ax.plot(grid, x0, label="tier0")
+        title_bits = []
+        for level_tag, perturbed in level_perturbed.items():
+            label = labels.get(level_tag, f"d{level_tag}")
+            ax.plot(grid, field(perturbed[idx]), label=label)
+            title_bits.append(f"{label}={level_deltas[level_tag][idx]:.3g}")
+        ax.set_title(f"IC {idx}: " + ", ".join(title_bits), fontsize=8)
+        ax.legend(fontsize=7)
+    fig.tight_layout()
+
+    out_path = out_root / pde / "tier2_burnin_comparison.png"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return out_path
+
+
+def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path, plot: bool = False):
     tier0 = common.load_tier0(data_root, pde)
     med_norm = common.compute_med_norm(tier0["init_states"])
 
     # d0 is always computed first: it is the paired control every other level's
     # measured delta is defined against, regardless of which levels were requested.
     ctrl_perturbed, ctrl_cov, ctrl_env_kwargs = run_level(pde, tier0, "0", med_norm)
+    level_perturbed = {"0": ctrl_perturbed}
+    level_deltas = {"0": np.zeros(tier0["N"])}
 
     registry_entries = []
     written = []
@@ -131,6 +175,8 @@ def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path):
 
         ctrl_norms = np.linalg.norm(ctrl_perturbed, axis=1)
         deltas = np.linalg.norm(perturbed - ctrl_perturbed, axis=1) / ctrl_norms
+        level_perturbed[level_tag] = perturbed
+        level_deltas[level_tag] = deltas
         median, iqr = common.delta_stats(deltas)
         delta_target = common.DELTA_TARGETS[level_tag]
 
@@ -164,6 +210,10 @@ def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path):
             "measured_delta_iqr": iqr,
             "flag_factor3_miss": flagged,
         })
+
+    if plot:
+        plot_path = plot_comparison(pde, tier0, level_perturbed, level_deltas, out_root)
+        print(f"[{pde}] wrote {plot_path}")
 
     return registry_entries, written
 
@@ -204,6 +254,10 @@ def parse_args() -> argparse.Namespace:
         help="Regenerate one (pde, level) cell into a temp dir and assert it is "
              "byte-identical to the existing output; exits nonzero on mismatch.",
     )
+    parser.add_argument(
+        "--plot", action="store_true",
+        help="Save data/<pde>/tier2_burnin_comparison.png (ICs 0,1,2 vs their burn-in states).",
+    )
     args = parser.parse_args()
     if args.verify and args.all:
         parser.error("--verify requires a single --pde, not --all.")
@@ -224,7 +278,7 @@ def main() -> None:
 
     all_entries = []
     for pde in pdes:
-        entries, written = generate_pde(pde, data_root, levels, data_root)
+        entries, written = generate_pde(pde, data_root, levels, data_root, plot=args.plot)
         all_entries.extend(entries)
         for out_path in written:
             print(f"[{pde}] wrote {out_path}")
