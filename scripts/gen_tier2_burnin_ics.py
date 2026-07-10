@@ -113,7 +113,7 @@ def write_level_npz(out_path: Path, tier0: dict, level_tag: str, delta_target: f
     )
 
 
-def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path, write: bool = True):
+def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path):
     tier0 = common.load_tier0(data_root, pde)
     med_norm = common.compute_med_norm(tier0["init_states"])
 
@@ -146,10 +146,9 @@ def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path, w
         else:
             print(f"[{pde}][d{level_tag}] control level; measured delta median={median:.4g} (expect 0)")
 
-        if write:
-            out_path = out_root / pde / f"tier2_burnin_d{level_tag}" / common.OUTPUT_FILE_NAME
-            write_level_npz(out_path, tier0, level_tag, delta_target, cov, med_norm, perturbed, env_kwargs_used)
-            written.append(out_path)
+        out_path = out_root / pde / f"tier2_burnin_d{level_tag}" / common.OUTPUT_FILE_NAME
+        write_level_npz(out_path, tier0, level_tag, delta_target, cov, med_norm, perturbed, env_kwargs_used)
+        written.append(out_path)
 
         registry_entries.append({
             "pde": pde,
@@ -161,7 +160,6 @@ def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path, w
             "med_norm": med_norm,
             "n_state": tier0["env_kwargs"]["n_state"],
             "noise_seed_base": common.NOISE_SEED_BASE,
-            "n_ic": tier0["N"],
             "measured_delta_median": median,
             "measured_delta_iqr": iqr,
             "flag_factor3_miss": flagged,
@@ -170,14 +168,14 @@ def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path, w
     return registry_entries, written
 
 
-def verify_one(pde: str, data_root: Path, out_root: Path, level: str) -> None:
-    real_path = out_root / pde / f"tier2_burnin_d{level}" / common.OUTPUT_FILE_NAME
+def verify_one(pde: str, data_root: Path, level: str) -> None:
+    real_path = data_root / pde / f"tier2_burnin_d{level}" / common.OUTPUT_FILE_NAME
     if not real_path.exists():
         raise SystemExit(f"--verify: expected existing output at {real_path}; generate it first.")
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_root = Path(tmp)
-        generate_pde(pde, data_root, [level], tmp_root, write=True)
+        generate_pde(pde, data_root, [level], tmp_root)
         tmp_path = tmp_root / pde / f"tier2_burnin_d{level}" / common.OUTPUT_FILE_NAME
 
         real_bytes = real_path.read_bytes()
@@ -199,10 +197,6 @@ def parse_args() -> argparse.Namespace:
     group.add_argument("--pde", help="Single PDE name (must have a frozen Tier-0 npz).")
     group.add_argument("--all", action="store_true", help="Process every PDE with a frozen Tier-0 npz.")
     parser.add_argument("--data-root", type=Path, default=common.DATA_ROOT)
-    parser.add_argument(
-        "--out-root", type=Path, default=None,
-        help="Where to write tier2_burnin_d{tag}/ dirs. Defaults to --data-root.",
-    )
     parser.add_argument("--level", choices=list(common.BURNIN_LEVELS), default=None,
                          help="Restrict to one level (default: run all three).")
     parser.add_argument(
@@ -219,11 +213,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     data_root = args.data_root.expanduser()
-    out_root = (args.out_root or args.data_root).expanduser()
 
     if args.verify:
         level = args.level or common.BURNIN_LEVELS[0]
-        verify_one(args.pde, data_root, out_root, level)
+        verify_one(args.pde, data_root, level)
         return
 
     pdes = common.discover_pdes(data_root) if args.all else [args.pde]
@@ -231,7 +224,7 @@ def main() -> None:
 
     all_entries = []
     for pde in pdes:
-        entries, written = generate_pde(pde, data_root, levels, out_root, write=True)
+        entries, written = generate_pde(pde, data_root, levels, data_root)
         all_entries.extend(entries)
         for out_path in written:
             print(f"[{pde}] wrote {out_path}")
