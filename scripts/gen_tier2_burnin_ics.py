@@ -114,7 +114,7 @@ def write_level_npz(out_path: Path, tier0: dict, level_tag: str, delta_target: f
     )
 
 
-def plot_comparison(pde: str, tier0: dict, level_perturbed: dict, level_deltas: dict, out_root: Path) -> Path:
+def plot_comparison(pde: str, tier0: dict, level_perturbed: dict, level_deltas: dict, npz_dir: Path) -> Path:
     """Save one figure: fixed ICs 0,1,2, one subplot each, overlaying tier0 vs d0 vs
     every other computed level on the spatial grid. Convention: schrodinger's state is
     [Re(u); Im(u)] -> plot |u|; wave's state is [displacement; velocity] -> plot
@@ -148,7 +148,7 @@ def plot_comparison(pde: str, tier0: dict, level_perturbed: dict, level_deltas: 
         ax.legend(fontsize=7)
     fig.tight_layout()
 
-    out_path = out_root / pde / "tier2_burnin_d1e-2" / "tier2_burnin_comparison.png"
+    out_path = npz_dir / "tier2_burnin_comparison.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -212,7 +212,8 @@ def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path, p
         })
 
     if plot:
-        plot_path = plot_comparison(pde, tier0, level_perturbed, level_deltas, out_root)
+        # Same folder as the last npz written this run, whichever --level(s) were requested.
+        plot_path = plot_comparison(pde, tier0, level_perturbed, level_deltas, out_path.parent)
         print(f"[{pde}] wrote {plot_path}")
 
     return registry_entries, written
@@ -256,7 +257,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--plot", action="store_true",
-        help="Save data/<pde>/tier2_burnin_d1e-2/tier2_burnin_comparison.png (ICs 0,1,2 vs their burn-in states).",
+        help="Save tier2_burnin_comparison.png (ICs 0,1,2 vs their burn-in states) into the "
+             "last level's npz folder (data/<pde>/tier2_burnin_d<level>/).",
     )
     args = parser.parse_args()
     if args.verify and args.all:
