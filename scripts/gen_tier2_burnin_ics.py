@@ -2,7 +2,7 @@
 """Generate Tier 2 burn-in noisy initial conditions (Option 1, primary).
 
 For each frozen Tier-0 IC, runs K=10 zero-control steps under process noise
-only (sensor_noise_cov=0.0) from a fresh env seeded by a per-IC noise_seed,
+only (sensor_noise_cov=1e-8) from a fresh env seeded by a per-IC noise_seed,
 and saves the resulting raw state as a new, perturbed IC. Three levels per
 PDE: d0 (cov=0, paired control / free evolution), d1e-2, d2e-1 (cov
 calibrated to a nominal target relative perturbation).
@@ -59,13 +59,14 @@ def run_level(pde: str, tier0: dict, level_tag: str, med_norm: float):
 
     base_resolved = _resolve_env_target_state(dict(tier0["env_kwargs"]))
     env_kwargs = dict(base_resolved)
+    sensor_noise_cov = 1e-8  # 0.0 does not run; this is small enough to leave the state unaffected.
     env_kwargs["process_noise_cov"] = cov
-    env_kwargs["sensor_noise_cov"] = 0.0
+    env_kwargs["sensor_noise_cov"] = sensor_noise_cov
 
     print(
         f"[{pde}][d{level_tag}] env_kwargs diff vs Tier-0 (exactly 2 fields): "
         f"process_noise_cov {base_resolved.get('process_noise_cov')!r} -> {cov!r}, "
-        f"sensor_noise_cov {base_resolved.get('sensor_noise_cov')!r} -> 0.0"
+        f"sensor_noise_cov {base_resolved.get('sensor_noise_cov')!r} -> {sensor_noise_cov!r}"
     )
 
     init_states = tier0["init_states"]
