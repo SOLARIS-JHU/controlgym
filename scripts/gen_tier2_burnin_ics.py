@@ -88,6 +88,9 @@ def run_level(pde: str, tier0: dict, level_tag: str, med_norm: float):
 
 def write_level_npz(out_path: Path, tier0: dict, level_tag: str, delta_target: float,
                      cov: float, med_norm: float, perturbed: np.ndarray, env_kwargs_used: dict) -> None:
+    print(f"[{tier0['pde']}][d{level_tag}] output shape: init_states={perturbed.shape}")
+    print(f"[{tier0['pde']}][d{level_tag}] env_kwargs used: {env_kwargs_used}")
+
     payload_for_hash = {
         "pde": tier0["pde"],
         "option": "burnin",

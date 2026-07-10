@@ -39,6 +39,9 @@ def additive_state(x0: np.ndarray, delta_target: float, noise_seed: int, n_state
 
 def write_level_npz(out_path: Path, tier0: dict, level_tag: str, delta_target: float,
                      sigma_median: float, perturbed: np.ndarray) -> None:
+    print(f"[{tier0['pde']}][d{level_tag}] output shape: init_states={perturbed.shape}")
+    print(f"[{tier0['pde']}][d{level_tag}] env_kwargs used: {tier0['env_kwargs']}")
+
     payload_for_hash = {
         "pde": tier0["pde"],
         "option": "additive",
