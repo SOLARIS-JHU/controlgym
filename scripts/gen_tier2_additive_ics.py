@@ -96,7 +96,7 @@ def plot_comparison(pde: str, tier0: dict, level_perturbed: dict, level_deltas: 
         ax.legend(fontsize=7)
     fig.tight_layout()
 
-    out_path = out_root / pde / "tier2_additive_comparison.png"
+    out_path = out_root / pde / "tier2_additive_d1e-2" / "tier2_additive_comparison.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -198,7 +198,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--plot", action="store_true",
-        help="Save data/<pde>/tier2_additive_comparison.png (ICs 0,1,2 vs their noisy variants).",
+        help="Save data/<pde>/tier2_additive_d1e-2/tier2_additive_comparison.png (ICs 0,1,2 vs their noisy variants).",
     )
     args = parser.parse_args()
     if args.verify and args.all:
