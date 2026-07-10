@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -119,10 +120,13 @@ def generate_pde(pde: str, data_root: Path, levels: list[str], out_root: Path, p
         perturbed = np.empty_like(init_states)
         sigmas = np.empty(N)
         for i in range(N):
+            start = time.perf_counter()
             noise_seed = common.NOISE_SEED_BASE + i
             x0 = init_states[i]
             sigmas[i] = delta_target * np.linalg.norm(x0) / np.sqrt(n_state)
             perturbed[i] = additive_state(x0, delta_target, noise_seed, n_state)
+            elapsed = time.perf_counter() - start
+            print(f"[{pde}][d{level_tag}] ic {i}/{N} took {elapsed:.3f}s")
 
         deltas = np.linalg.norm(perturbed - init_states, axis=1) / np.linalg.norm(init_states, axis=1)
         level_perturbed[level_tag] = perturbed

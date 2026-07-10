@@ -25,6 +25,7 @@ import argparse
 import hashlib
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -71,6 +72,7 @@ def run_level(pde: str, tier0: dict, level_tag: str, med_norm: float):
     N = tier0["N"]
     perturbed = np.empty_like(init_states)
     for i in range(N):
+        start = time.perf_counter()
         noise_seed = common.NOISE_SEED_BASE + i
         env = gym.make(env_id, **env_kwargs)
         _, info = env.reset(seed=noise_seed, state=init_states[i])
@@ -78,6 +80,8 @@ def run_level(pde: str, tier0: dict, level_tag: str, med_norm: float):
         for _ in range(common.K_BURNIN):
             _, _, _, _, info = env.step(action)
         perturbed[i] = info["state"]
+        elapsed = time.perf_counter() - start
+        print(f"[{pde}][d{level_tag}] ic {i}/{N} took {elapsed:.3f}s")
 
     return perturbed, cov, env_kwargs
 
